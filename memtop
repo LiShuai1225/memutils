@@ -1,0 +1,144 @@
+#!/bin/bash
+set -e; set -o pipefail
+
+# A simple tool to sum the 'proportional set size' of running processes. The
+# 'proportional set size' is a measure of pages allocated to a process which are
+# in use, dividing shared pages by the number of processes using them.
+
+# This works well because if N processes are using Skb of shared data and Pkb of
+# private data the PSS for all processes is P + N*S/N = P + S, i.e. the sum of
+# private + shared page use, avoiding double counting and distributing shared
+# pages fairly between each process that uses them.
+
+# Wrap
+CMD_WRAP=80
+
+# Output args prefaced by script name.
+function say()
+{
+	echo "$(basename $0): $@"
+}
+
+# Output args to stderr and exit with error code.
+function fatal()
+{
+	say $@ >&2
+	exit 1
+}
+
+# Output usage to stderr.
+function usage()
+{
+	echo "usage: $(basename $0) [-c] [-h] [-l]" >&2
+	echo "  -c, Use /proc/\$pid/comm for command instead of /proc/\$pid/cmdline." >&2
+	echo "  -g, Group by comm name (implies -c.)" >&2
+	echo "  -h, Print human-readable memory usage figures." >&2
+	echo "  -l, Don't truncate long command lines." >&2
+	exit 1
+}
+
+# Sudo if we're not already root.
+function elevate()
+{
+	if [ "$EUID" != "0" ]; then
+		exec sudo --preserve-env $0 $@
+		exit $?
+	fi
+}
+
+# Outputs human-readable value for $1 which is assumed to be KB.
+function human_format_kb()
+{
+	numfmt --to=iec-i --suffix=B $(($1 * 1024))
+}
+
+# Sum PSS values from $1/smaps.
+function sum_pss()
+{
+	grep "^Pss" $1/smaps | awk '{print $2}' | \
+	    paste --serial --delimiters=+ | bc || true
+}
+
+# Outputs process's PSS, for the process with proc dir $1.
+function print_pss()
+{
+	proc=$1
+	pid=$(basename $proc)
+
+	# if proc directory is missing, process has died prior to the function
+	# being called. We will sometimes die because of this but this check
+	# should catch at least some cases.
+	[ ! -d "$proc" ] && return
+
+	[ -z "$use_comm" ] && cmd=$(<$proc/cmdline) || cmd=$(<$proc/comm)
+
+	pss=$(sum_pss $proc)
+	# If we can't find any data, then the process might be a kernel thread,
+	# zombie or otherwise not mapping virtual memory, skip.
+	[ -z "$pss" ] && return
+
+	# Grouping by comm handles human-readable values later.
+	[ ! -z "$human_sort" ] && [ -z "$use_comm" ] && pss=$(human_format_kb $pss)
+
+	# Wrap command, which can be huuuge. I'm looking at you chrome.
+	[ -z "$dont_trunc" ] && cmd=$(echo $cmd | cut -c 1-$CMD_WRAP)
+
+	printf "%6d %8s %s\n" $pid $pss "$cmd"
+}
+
+# Group PSS usage by /proc/$pid/comm + output per-comm values.
+# This has print_pss data piped into it.
+function group_by_comm()
+{
+	declare -A amount_hash
+
+	while read pid amount name; do
+		amount_hash[$name]=$((amount_hash[$name] + $amount))
+	done
+
+	for comm in "${!amount_hash[@]}"; do
+		pss=${amount_hash[$comm]}
+		[ ! -z "$human_sort" ] && pss=$(human_format_kb $pss)
+
+		printf "%8s %s\n" $pss $comm
+	done | $sort_cmd --key=1
+}
+
+[ ! -f "/proc/$$/smaps" ] && fatal "Missing /proc/$$/smaps, ancient linux?"
+
+while getopts ":cghl" opt; do
+	case "$opt" in
+		c)
+			export use_comm=1
+			;;
+		g)
+			export pipe_cmd="group_by_comm"
+			export use_comm=1
+			;;
+		h)
+			export human_sort=1
+			export sort_cmd="sort --human-numeric-sort"
+			;;
+		l)
+			export dont_trunc=1
+			;;
+		?)
+			usage
+			;;
+	esac
+done
+sort_cmd=${sort_cmd:-sort --numeric-sort}
+pipe_cmd=${pipe_cmd:-$sort_cmd --key=2}
+
+# We need to grab information for _all_ processes, some of which require su
+# access.
+elevate
+
+for path in /proc/*; do
+	# We only want to look at pid entries in /proc so pull down numeric dirs
+	# only. Stolen with gratitude from http://stackoverflow.com/a/3951175.
+	case $(basename $path) in
+		''|*[!0-9]*)                 ;; # Not numeric.
+		          *) print_pss $path ;;
+	esac
+done | $pipe_cmd
