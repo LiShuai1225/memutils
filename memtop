@@ -52,11 +52,16 @@ function human_format_kb()
 	numfmt --to=iec-i --suffix=B $(($1 * 1024))
 }
 
+function add()
+{
+	eval 'echo $(('"$(cat)"'))'
+}
+
 # Sum PSS values from $1/smaps.
 function sum_pss()
 {
 	grep "^Pss" $1/smaps | awk '{print $2}' | \
-	    paste --serial --delimiters=+ | bc || true
+	    paste --serial --delimiters=+ | add || true
 }
 
 # Outputs process's PSS, for the process with proc dir $1.
@@ -75,7 +80,9 @@ function print_pss()
 	pss=$(sum_pss $proc)
 	# If we can't find any data, then the process might be a kernel thread,
 	# zombie or otherwise not mapping virtual memory, skip.
-	[ -z "$pss" ] && return
+	if [ -z "$pss" ] || [ "$pss" = 0 ]; then
+		return
+	fi
 
 	# Grouping by comm handles human-readable values later.
 	[ ! -z "$human_sort" ] && [ -z "$use_comm" ] && pss=$(human_format_kb $pss)
