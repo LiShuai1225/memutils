@@ -40,7 +40,7 @@ function usage()
 # Sudo if we're not already root.
 function elevate()
 {
-	if [ "$EUID" != "0" ]; then
+	if [[ "$EUID" != "0" ]]; then
 		exec sudo --preserve-env $0 $@
 		exit $?
 	fi
@@ -73,22 +73,22 @@ function print_pss()
 	# if proc directory is missing, process has died prior to the function
 	# being called. We will sometimes die because of this but this check
 	# should catch at least some cases.
-	[ ! -d "$proc" ] && return
+	[[ ! -d "$proc" ]] && return
 
-	[ -z "$use_comm" ] && cmd=$(<$proc/cmdline) || cmd=$(<$proc/comm)
+	[[ -z "$use_comm" ]] && cmd=$(<$proc/cmdline) || cmd=$(<$proc/comm)
 
 	pss=$(sum_pss $proc)
 	# If we can't find any data, then the process might be a kernel thread,
 	# zombie or otherwise not mapping virtual memory, skip.
-	if [ -z "$pss" ] || [ "$pss" = 0 ]; then
+	if [[ -z "$pss" ]] || [[ "$pss" = 0 ]]; then
 		return
 	fi
 
 	# Grouping by comm handles human-readable values later.
-	[ ! -z "$human_sort" ] && [ -z "$use_comm" ] && pss=$(human_format_kb $pss)
+	[[ ! -z "$human_sort" ]] && [[ -z "$use_comm" ]] && pss=$(human_format_kb $pss)
 
 	# Wrap command, which can be huuuge. I'm looking at you chrome.
-	[ -z "$dont_trunc" ] && cmd=$(echo $cmd | cut -c 1-$CMD_WRAP)
+	[[ -z "$dont_trunc" ]] && cmd=$(echo $cmd | cut -c 1-$CMD_WRAP)
 
 	printf "%6d %8s %s\n" $pid $pss "$cmd"
 }
@@ -105,13 +105,13 @@ function group_by_comm()
 
 	for comm in "${!amount_hash[@]}"; do
 		pss=${amount_hash[$comm]}
-		[ ! -z "$human_sort" ] && pss=$(human_format_kb $pss)
+		[[ ! -z "$human_sort" ]] && pss=$(human_format_kb $pss)
 
 		printf "%8s %s\n" $pss $comm
 	done | $sort_cmd --key=1
 }
 
-[ ! -f "/proc/$$/smaps" ] && fatal "Missing /proc/$$/smaps, ancient linux?"
+[[ ! -f "/proc/$$/smaps" ]] && fatal "Missing /proc/$$/smaps, ancient linux?"
 
 while getopts ":cghl" opt; do
 	case "$opt" in
