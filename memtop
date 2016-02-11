@@ -75,7 +75,7 @@ function print_pss()
 	# should catch at least some cases.
 	[[ ! -d "$proc" ]] && return
 
-	[[ -z "$use_comm" ]] && cmd=$(<$proc/cmdline) || cmd=$(<$proc/comm)
+	[[ -z "$use_comm" ]] && cmd=$(<$proc/cmdline) || cmd=$(cut -d " " -f 1 <$proc/comm)
 
 	pss=$(sum_pss $proc)
 	# If we can't find any data, then the process might be a kernel thread,
